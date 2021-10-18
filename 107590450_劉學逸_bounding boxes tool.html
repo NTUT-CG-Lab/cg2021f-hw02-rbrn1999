@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<title>three.js webgl - loaders - MMD loader</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link type="text/css" rel="stylesheet" href="main.css">
+	<style>
+		body {
+			background-color: #fff;
+			color: #444;
+		}
+
+		a {
+			color: #08f;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="info">
+		<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> - MMDLoader test<br />
+		<a href="https://github.com/mrdoob/three.js/tree/master/examples/models/mmd#readme" target="_blank"
+			rel="noopener">MMD Assets license</a><br />
+		Copyright
+		<a href="https://sites.google.com/view/evpvp/" target="_blank" rel="noopener">Model Data</a>
+		<a href="http://seiga.nicovideo.jp/seiga/im5162984" target="_blank" rel="noopener">Pose Data</a>
+	</div>
+
+	<script src="js/libs/ammo.wasm.js"></script>
+	<script src="scoreoutputer.min.js"></script>
+	<script src="FileSaver.min.js"></script>    
+	<script>
+		var so = new ScoreOutputer("109598105");
+		so.installCSS(function () {
+			so.addChild("視角可以移動及放大", 2, true);
+			so.addChild("在畫面上畫出左眼的邊框", 2, true);
+			so.addChild("複製左眼邊框變化到右眼", 2, true);
+			so.addChild("可選擇當前讀取角色或按鍵選擇上 / 下一隻角色", 1, true);
+			so.addChild("可儲存座標點檔案", 1, true);
+			so.addChild("回答問題", 2, true);
+
+			so.renderModal(
+				document.body,
+				'rgba(100,45,58,1)',
+				'white',
+				'15pt',
+				'15px',
+				dialogTitle = "自我評分表"
+			);
+
+			so.installDownloadBtn();
+			so.renderBtn(
+				document.body,
+				"開啟自評表"
+			);
+		});
+
+	</script>
+	<script type="module">
+
+		import * as THREE from './build/three.module.js';
+		import { GUI } from './jsm/libs/dat.gui.module.js';
+		import { OrbitControls } from './jsm/controls/OrbitControls.js';
+		import { OutlineEffect } from './jsm/effects/OutlineEffect.js';
+		import { MMDLoader } from './jsm/loaders/MMDLoader.js';
+		import { MMDAnimationHelper } from './jsm/animation/MMDAnimationHelper.js';
+
+		class BoundingBox {
+			constructor(bottom, left, top, right) {
+				this.bottom = bottom;
+				this.left = left;
+				this.top = top;
+				this.right = right;
+			}
+		}
+
+		let camera, scene, renderer, effect, canvas, mouse;
+		let mesh, helper;
+		let isSettingLine = [false, false, false, false], lines = [null, null, null, null, null, null, null, null];
+
+		const vpds = [];
+
+		Ammo().then(function (AmmoLib) {
+
+			Ammo = AmmoLib;
+
+			init();
+			animate();
+
+		});
+
+		function init() {
+
+			const container = document.createElement('div');
+			document.body.appendChild(container);
+			let scale = 30;
+			camera = new THREE.OrthographicCamera(window.innerWidth / scale / - 2, window.innerWidth / scale / 2, window.innerHeight / scale / 2, window.innerHeight / scale / - 2, 0.1, 1000);
+			//camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 2000 );
+			camera.position.z = 25;
+			// scene
+
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0xffffff);
+
+			const ambient = new THREE.AmbientLight(0x666666);
+			scene.add(ambient);
+
+			const directionalLight = new THREE.DirectionalLight(0x887766);
+			directionalLight.position.set(- 1, 1, 1).normalize();
+			scene.add(directionalLight);
+			// mouse
+			mouse = new THREE.Vector3(0, 0, 0);
+			// lines mesh for left eye
+			let material = new THREE.MeshBasicMaterial( { color: 0xff0000 } );
+			let geometry = new THREE.PlaneGeometry( 5, 0.005 );
+			lines[0] = new THREE.Mesh( geometry, material );
+			lines[2] = new THREE.Mesh( geometry, material );
+			material = new THREE.MeshBasicMaterial( { color: 0x00ff00 } );
+			geometry = new THREE.PlaneGeometry( 0.005, 20 );
+			lines[1] = new THREE.Mesh( geometry, material );
+			lines[3] = new THREE.Mesh( geometry, material );
+			// lines mesh for right eye
+			material = new THREE.MeshBasicMaterial( { color: 0x800080 } );
+			geometry = new THREE.PlaneGeometry( 20, 0.005 );
+			lines[4] = new THREE.Mesh( geometry, material );
+			lines[6] = new THREE.Mesh( geometry, material );
+			material = new THREE.MeshBasicMaterial( { color: 0xadd8e6 } );
+			geometry = new THREE.PlaneGeometry( 0.005, 20 );
+			lines[5] = new THREE.Mesh( geometry, material );
+			lines[7] = new THREE.Mesh( geometry, material );
+
+			lines.forEach( l => {
+				l.visible = false
+				scene.add(l);
+			});
+			// canvas
+			// canvas = new THREE.Mesh( new THREE.PlaneGeometry( 50, 50 ), new THREE.MeshBasicMaterial( {color: 0x78DBD3} ));
+			// scene.add( canvas );
+			// canvas.alpha = 0;
+
+			//
+
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			container.appendChild(renderer.domElement);
+
+			effect = new OutlineEffect(renderer);
+
+			// model
+
+			function onProgress(xhr) {
+				if (xhr.lengthComputable) {
+					const percentComplete = xhr.loaded / xhr.total * 100;
+					console.log(Math.round(percentComplete, 2) + '% downloaded');
+				}
+			}
+			const modelFiles = ['models/mmd/kizunaai/kizunaai.pmx', 'models/mmd/KokoroAmamiya/KokoroAmamiya.pmx', 'models/mmd/るいのれ式物述有栖_配布用フォルダ/物述有栖.pmx'];
+			let modelIndex = 0;
+			const vpdFiles = [
+				'models/mmd/vpds/01.vpd',
+				'models/mmd/vpds/02.vpd',
+				'models/mmd/vpds/03.vpd',
+				'models/mmd/vpds/04.vpd',
+				'models/mmd/vpds/05.vpd',
+				'models/mmd/vpds/06.vpd',
+				'models/mmd/vpds/07.vpd',
+				'models/mmd/vpds/08.vpd',
+				//'models/mmd/vpds/09.vpd',
+				//'models/mmd/vpds/10.vpd',
+				'models/mmd/vpds/11.vpd'
+			];
+
+			helper = new MMDAnimationHelper();
+
+			const loader = new MMDLoader();
+
+			loader.load(modelFiles[0], function (object) {
+				mesh = object;
+				mesh.position.y = - 10;
+				scene.add(mesh);
+				let vpdIndex = 0;
+				function loadVpd() {
+					const vpdFile = vpdFiles[vpdIndex];
+					loader.loadVPD(vpdFile, false, function (vpd) {
+						vpds.push(vpd);
+						vpdIndex++;
+						if (vpdIndex < vpdFiles.length) {
+							loadVpd();
+						} else {
+							initGui();
+						}
+					}, onProgress, null);
+				}
+				loadVpd();
+			}, onProgress, null);
+
+			function setLine(i) {
+				lines[i].position.set(mouse.x, mouse.y, mouse.z);
+				lines[i].visible = true;
+				isSettingLine = [false, false, false, false];
+				isSettingLine[i] = true;
+			}
+
+			function copyToRightEye() {
+				for(let i=4; i<8; i++) {
+					let x = - lines[i-4].position.x,
+						y = lines[i-4].position.y,
+						z = lines[i-4].position.z;
+					lines[i].position.set( x, y, z );
+					lines[i].visible = true;
+				}
+			}
+
+			function saveBoundingBox() {
+				let leftEye = new BoundingBox(lines[0].position.y, lines[1].position.x, lines[2].position.y, lines[3].position.x);
+				let rightEye = new BoundingBox(lines[4].position.y, lines[5].position.x, lines[6].position.y, lines[7].position.x);
+				let object =  {
+					'leftEye': leftEye,
+					'rightEye': rightEye
+				};
+				let json = JSON.stringify(object);
+				let blob = new Blob([json], {type: "application/json"});
+				window.saveAs(blob, "model_data.json");
+			}
+
+			function loadNextModel(accend=1) {
+				if (accend <= 0) {
+					if (modelIndex == 0) { console.log("This is the first model"); return; }
+					modelIndex--;
+				} else {
+					if (modelIndex == (modelFiles.length - 1)) { console.log("This is the last model"); return; }
+					modelIndex++;
+				}
+				scene.remove(mesh);
+				loader.load(modelFiles[modelIndex], function (object) {
+					mesh = object;
+					mesh.position.y = - 10;
+					scene.add(mesh);
+					let vpdIndex = 0;
+					function loadVpd() {
+						const vpdFile = vpdFiles[vpdIndex];
+						loader.loadVPD(vpdFile, false, function (vpd) {
+							vpds.push(vpd);
+							vpdIndex++;
+							if (vpdIndex < vpdFiles.length) {
+								loadVpd();
+							} else {
+								initGui();
+							}
+						}, onProgress, null);
+					}
+					loadVpd();
+				}, onProgress, null);
+			}
+			// events
+			document.addEventListener('keydown', onKeyDown);
+			document.addEventListener('mousemove', onMouseMove);
+			document.addEventListener('click', onClick);
+			//
+			function onKeyDown(e) {
+				if (e.keyCode >= 49 && e.keyCode <= 52) {
+					setLine(e.keyCode - 49);
+					return;
+				}
+				if (e.keyCode == 81) {
+					copyToRightEye();
+					return;
+				}
+				if (e.keyCode == 83) {
+					saveBoundingBox();
+					return;
+				}
+				if (e.keyCode == 65) {
+					loadNextModel(-1);
+					return;
+				}
+				if (e.keyCode == 68) {
+					loadNextModel();
+					return;
+				}
+			}
+
+			function onMouseMove(e) {
+				mouse.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1, 0);
+				mouse.unproject(camera);
+				mouse.setZ( 10 );
+				for (let i=0; i<4; i++) {
+					if (isSettingLine[i]) {
+						lines[i].position.set(mouse.x, mouse.y, mouse.z);
+						break;
+					}
+				}
+			}
+
+			function onClick(e) {
+				for(let i=0; i<4; i++) {
+					isSettingLine[i] = false;
+				}
+			}
+
+			window.addEventListener('resize', onWindowResize);
+			//鏡頭控制
+			const cameracontrols = new OrbitControls(camera, renderer.domElement);
+			cameracontrols.minDistance = 10;
+			cameracontrols.maxDistance = 100;
+			cameracontrols.enableRotate = false;
+			function initGui() {
+				const gui = new GUI();
+				const dictionary = mesh.morphTargetDictionary;
+				const controls = {};
+				const keys = [];
+				const poses = gui.addFolder('Poses');
+				const morphs = gui.addFolder('Morphs');
+
+				function getBaseName(s) {
+					return s.slice(s.lastIndexOf('/') + 1);
+				}
+
+				function initControls() {
+					for (const key in dictionary) {
+						controls[key] = 0.0;
+					}
+
+					controls.pose = - 1;
+					for (let i = 0; i < vpdFiles.length; i++) {
+						controls[getBaseName(vpdFiles[i])] = false;
+					}
+				}
+
+				function initKeys() {
+					for (const key in dictionary) {
+						keys.push(key);
+					}
+				}
+
+				function initPoses() {
+					const files = { default: - 1 };
+					for (let i = 0; i < vpdFiles.length; i++) {
+						files[getBaseName(vpdFiles[i])] = i;
+					}
+					poses.add(controls, 'pose', files).onChange(onChangePose);
+				}
+
+				function initMorphs() {
+					for (const key in dictionary) {
+						morphs.add(controls, key, 0.0, 1.0, 0.01).onChange(onChangeMorph);
+					}
+				}
+
+				function onChangeMorph() {
+					for (let i = 0; i < keys.length; i++) {
+						const key = keys[i];
+						const value = controls[key];
+						mesh.morphTargetInfluences[i] = value;
+					}
+				}
+
+				function onChangePose() {
+					const index = parseInt(controls.pose);
+					if (index === - 1) {
+						mesh.pose();
+					} else {
+						helper.pose(mesh, vpds[index]);
+					}
+				}
+
+				initControls();
+				initKeys();
+				initPoses();
+				initMorphs();
+
+				onChangeMorph();
+				onChangePose();
+
+				poses.open();
+				morphs.open();
+			}
+		}
+
+		function onWindowResize() {
+			let scale = 30;
+			camera.left = window.innerWidth / scale / - 2;
+			camera.right = window.innerWidth / scale / 2;
+			camera.top = window.innerHeight / scale / 2;
+			camera.bottom = window.innerHeight / scale / - 2;
+			camera.updateProjectionMatrix();
+			effect.setSize(window.innerWidth, window.innerHeight);
+		}
+
+		//
+
+		function animate() {
+			requestAnimationFrame(animate);
+			render();
+		}
+
+		function render() {
+			effect.render(scene, camera);
+		}
+	</script>
+
+</body>
+
+</html>
