@@ -132,7 +132,7 @@
 			lines[7] = new THREE.Mesh( geometry, material );
 
 			lines.forEach( l => {
-				l.visible = false
+				l.visible = false;
 				scene.add(l);
 			});
 			// canvas
@@ -233,6 +233,9 @@
 				} else {
 					if (modelIndex == (modelFiles.length - 1)) { console.log("This is the last model"); return; }
 					modelIndex++;
+				}
+				for(let i=0; i<lines.length; i++) {
+					lines[i].visible = false;
 				}
 				scene.remove(mesh);
 				loader.load(modelFiles[modelIndex], function (object) {
